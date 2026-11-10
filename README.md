@@ -24,7 +24,7 @@ npm start
 - Administrador: `admin` / `admin123`
 - Alunos: os usuarios estao listados em “Contas para demonstracao” na tela de login; senha inicial `aluno123`.
 
-Os dados iniciais incluem dez alunos ficticios e quatro disciplinas. As medias comecam como `null`. Alunos e disciplinas adicionados, medias, configuracao academica, equipe e contas ficam salvos no LocalStorage deste navegador.
+Os dados iniciais incluem dez alunos ficticios e quatro disciplinas. Cada disciplina tem tres campos de nota (N1, N2 e N3) iniciados como `null`; a media e calculada com os valores lancados, sem contar campos vazios como zero. Alunos e disciplinas adicionados, notas, medias calculadas, configuracao academica, equipe e contas ficam salvos no LocalStorage deste navegador.
 
 ## Rotas
 

@@ -1,6 +1,8 @@
 import {
+  averageAssessments,
   createInitialData,
   initialTeam,
+  normalizeAssessmentScores,
   SESSION_KEY,
   STORAGE_KEY,
   type SchoolData,
@@ -67,14 +69,42 @@ export function loadSchoolData(): LoadResult {
         warning: "Os dados salvos nao puderam ser reconhecidos. Eles foram preservados; novos dados serao usados nesta sessao.",
       };
     }
-    return {
-      data: {
-        ...parsed,
-        team: migrateDefaultTeam(parsed.team),
-        adminCredentials: parsed.adminCredentials ?? { username: "admin", password: "admin123" },
-      },
-      warning: null,
+    const students = parsed.students.map((student) => {
+      const savedAssessments = (student as SchoolData["students"][number] & { assessments?: unknown }).assessments;
+      const assessmentRecord =
+        savedAssessments && typeof savedAssessments === "object"
+          ? (savedAssessments as Record<string, unknown>)
+          : {};
+      const assessments = Object.fromEntries(
+        Object.entries(student.grades).map(([subjectId, legacyGrade]) => [
+          subjectId,
+          normalizeAssessmentScores(assessmentRecord[subjectId], legacyGrade),
+        ]),
+      );
+      return {
+        ...student,
+        assessments,
+        grades: Object.fromEntries(
+          Object.entries(assessments).map(([subjectId, scores]) => [subjectId, averageAssessments(scores)]),
+        ),
+      };
+    });
+    const data: SchoolData = {
+      ...parsed,
+      version: 2,
+      team: migrateDefaultTeam(parsed.team),
+      students,
+      adminCredentials: parsed.adminCredentials ?? { username: "admin", password: "admin123" },
     };
+    let warning: string | null = null;
+    if (parsed.version !== 2) {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch {
+        warning = "Os dados foram carregados, mas a atualizacao do formato local nao pode ser salva.";
+      }
+    }
+    return { data, warning };
   } catch {
     return {
       data: createInitialData(),
@@ -139,7 +169,7 @@ function isSchoolData(value: unknown): value is SchoolData {
   if (!value || typeof value !== "object") return false;
   const data = value as Partial<SchoolData>;
   return (
-    data.version === 1 &&
+    (data.version === 1 || data.version === 2) &&
     Array.isArray(data.students) &&
     Array.isArray(data.subjects) &&
     Array.isArray(data.team) &&

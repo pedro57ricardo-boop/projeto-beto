@@ -44,18 +44,19 @@ Aplicacao educacional demonstrativa para que administradores gerenciem alunos, d
 - Permitir criar, listar, pesquisar, consultar, editar e excluir alunos; matriculas e usuarios devem ser unicos.
 - Permitir CRUD de disciplinas e associacao por aluno. Impedir duplicacao da mesma disciplina por aluno.
 - Ao remover aluno ou disciplina, limpar referencias e medias dependentes de forma consistente.
-- Cada associacao aluno-disciplina tem media `number | null`, inicialmente `null`.
+- Cada associacao aluno-disciplina armazena tres notas `number | null`, todas inicialmente `null`, e uma media calculada `number | null`.
 
 ## Medias e classificacao academica
 
-- Aceitar somente valores numericos finitos entre 0 e 10, inclusive; `null` significa nao lancada e nunca equivale a zero.
+- Aceitar somente valores numericos finitos entre 0 e 10, inclusive. Notas vazias nao entram na media nem equivalem a zero.
+- Calcular a media da disciplina com as notas lancadas; manter a situacao como pendente enquanto alguma das tres notas estiver vazia. Calcular a media geral somente quando todas as notas das disciplinas associadas estiverem completas.
 - Situacoes: media menor que 5 = reprovado; media de 6 ate menos de 7 = recuperacao; media igual ou maior que 7 = aprovado.
 - A faixa de 5 ate menos de 6 esta pendente de confirmacao. Preservar em uma configuracao explicita e classificar como `pending-rule`, sem inferir situacao definitiva.
-- Media nula exibe “Media nao lancada”. Recalcular a situacao ao criar/alterar media. Indicadores: verde aprovado, amarelo recuperacao, vermelho reprovado, cinza pendente/sem lancamento.
+- Media nula exibe “Media nao lancada”. Recalcular a situacao ao criar/alterar nota. Indicadores: verde aprovado, amarelo recuperacao, vermelho reprovado, cinza pendente/sem lancamento.
 
 ## Persistencia
 
-- Salvar estado versionado contendo alunos, disciplinas, associacoes/notas e usuarios demonstrativos.
+- Salvar estado versionado contendo alunos, disciplinas, associacoes, tres notas por disciplina, medias calculadas e usuarios demonstrativos.
 - Fazer hidratacao no cliente, lidar com JSON corrompido com mensagem/fallback nao destrutivo e persistir alteracoes sem sobrescrever dados existentes na inicializacao.
 - Isolar acesso a LocalStorage atras de funcoes/adaptador em `src/lib/` para facilitar futura troca por API/banco de dados.
 - Estado de sessao demonstrativo tambem e local e deve ser removido ao sair.

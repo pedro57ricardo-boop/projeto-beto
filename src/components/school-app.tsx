@@ -30,12 +30,18 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import {
+  averageAssessments,
+  classifyAssessments,
   classifyGrade,
   createId,
+  emptyAssessmentScores,
   statusLabels,
   statusStyles,
   studentAverage,
+  studentStatus,
   validateGrade,
+  ASSESSMENT_COUNT,
+  type AssessmentScores,
   type GradeStatus,
   type SchoolData,
   type Session,
@@ -302,6 +308,7 @@ export default function SchoolApp() {
           username,
           password,
           grades: Object.fromEntries(data.subjects.map((subject) => [subject.id, null])),
+          assessments: Object.fromEntries(data.subjects.map((subject) => [subject.id, emptyAssessmentScores()])),
         };
     const students = existingId
       ? data.students.map((item) => (item.id === existingId ? student : item))
@@ -350,7 +357,11 @@ export default function SchoolApp() {
       : [...data.subjects, subject];
     const students = existingId
       ? data.students
-      : data.students.map((student) => ({ ...student, grades: { ...student.grades, [subject.id]: null } }));
+      : data.students.map((student) => ({
+          ...student,
+          grades: { ...student.grades, [subject.id]: null },
+          assessments: { ...student.assessments, [subject.id]: emptyAssessmentScores() },
+        }));
     commit({ ...data, subjects, students }, existingId ? "Disciplina atualizada." : "Disciplina criada e associada aos alunos.");
     setSubjectEditor(null);
   };
@@ -360,8 +371,10 @@ export default function SchoolApp() {
     if (!window.confirm(`Excluir ${subject.name}? As medias desta disciplina tambem serao removidas.`)) return;
     const students = data.students.map((student) => {
       const grades = { ...student.grades };
+      const assessments = { ...student.assessments };
       delete grades[subject.id];
-      return { ...student, grades };
+      delete assessments[subject.id];
+      return { ...student, grades, assessments };
     });
     commit({ ...data, subjects: data.subjects.filter((item) => item.id !== subject.id), students }, "Disciplina removida.");
   };
@@ -371,9 +384,15 @@ export default function SchoolApp() {
     const students = data.students.map((item) => {
       if (item.id !== student.id) return item;
       const grades = { ...item.grades };
-      if (checked) grades[subject.id] = null;
-      else delete grades[subject.id];
-      return { ...item, grades };
+      const assessments = { ...item.assessments };
+      if (checked) {
+        grades[subject.id] = null;
+        assessments[subject.id] = emptyAssessmentScores();
+      } else {
+        delete grades[subject.id];
+        delete assessments[subject.id];
+      }
+      return { ...item, grades, assessments };
     });
     commit({ ...data, students }, checked ? "Disciplina associada." : "Associacao removida.");
   };
@@ -381,20 +400,34 @@ export default function SchoolApp() {
   const saveGrade = (student: Student, subject: Subject) => {
     if (session?.role !== "admin" || !data) return;
     const key = `${student.id}:${subject.id}`;
-    const raw = gradeDrafts[key] ?? (student.grades[subject.id] === null ? "" : String(student.grades[subject.id]));
-    const grade = validateGrade(raw);
-    if (raw.trim() !== "" && grade === null) {
+    const currentScores = student.assessments[subject.id] ?? emptyAssessmentScores();
+    const rawScores = Array.from({ length: ASSESSMENT_COUNT }, (_, index) => {
+      const draftKey = `${key}:${index}`;
+      const score = currentScores[index];
+      return gradeDrafts[draftKey] ?? (score === null ? "" : String(score));
+    });
+    const invalidIndex = rawScores.findIndex((raw) => raw.trim() !== "" && validateGrade(raw) === null);
+    if (invalidIndex !== -1) {
       setGradeErrors((errors) => ({ ...errors, [key]: "Use um valor de 0 a 10." }));
       return;
     }
+    const scores = rawScores.map(validateGrade) as AssessmentScores;
+    const average = averageAssessments(scores);
     const students = data.students.map((item) =>
       item.id === student.id
-        ? { ...item, grades: { ...item.grades, [subject.id]: grade } }
+        ? {
+            ...item,
+            grades: { ...item.grades, [subject.id]: average },
+            assessments: { ...item.assessments, [subject.id]: scores },
+          }
         : item,
     );
     setGradeErrors((errors) => ({ ...errors, [key]: "" }));
-    setGradeDrafts((drafts) => ({ ...drafts, [key]: grade === null ? "" : String(grade) }));
-    commit({ ...data, students }, grade === null ? "Media removida." : "Media salva e situacao recalculada.");
+    setGradeDrafts((drafts) => ({
+      ...drafts,
+      ...Object.fromEntries(rawScores.map((raw, index) => [`${key}:${index}`, raw])),
+    }));
+    commit({ ...data, students }, average === null ? "Notas removidas." : "Notas salvas. Media recalculada.");
   };
 
   const saveTeam = () => {
@@ -593,15 +626,21 @@ function LoginScreen({
 }
 
 function Dashboard({ data, onNavigate }: { data: SchoolData; onNavigate: (view: View) => void }) {
-  const studentStatuses = data.students.map((student) => classifyGrade(studentAverage(student), data.rules.fiveToSix));
-  const pendingGrades = data.students.reduce((total, student) => total + Object.values(student.grades).filter((grade) => grade === null).length, 0);
+  const studentStatuses = data.students.map((student) => studentStatus(student, data.rules.fiveToSix));
+  const pendingGrades = data.students.reduce(
+    (total, student) => total + Object.values(student.assessments).reduce(
+      (pending, scores) => pending + scores.filter((score) => score === null).length,
+      0,
+    ),
+    0,
+  );
   const metrics = [
     { label: "Alunos cadastrados", value: data.students.length, detail: "matriculas ativas", icon: Users, tone: "mint" },
     { label: "Disciplinas", value: data.subjects.length, detail: "na grade escolar", icon: BookMarked, tone: "blue" },
     { label: "Alunos aprovados", value: studentStatuses.filter((status) => status === "passed").length, detail: "pela media geral", icon: CheckCircle2, tone: "green" },
     { label: "Em recuperacao", value: studentStatuses.filter((status) => status === "recovery").length, detail: "pela media geral", icon: Clock3, tone: "yellow" },
     { label: "Alunos reprovados", value: studentStatuses.filter((status) => status === "failed").length, detail: "pela media geral", icon: AlertTriangle, tone: "red" },
-    { label: "Medias pendentes", value: pendingGrades, detail: "notas nao lancadas", icon: ClipboardList, tone: "neutral" },
+    { label: "Notas pendentes", value: pendingGrades, detail: "avaliacoes nao lancadas", icon: ClipboardList, tone: "neutral" },
   ];
   const recentStudents = [...data.students].slice(0, 5);
 
@@ -625,23 +664,177 @@ function SubjectsPage({ subjects, students, onEdit, onDelete, onGrades }: { subj
   </>;
 }
 
-function GradesPage({ data, selectedStudentId, onStudentChange, drafts, errors, onDraftChange, onSave, onAssociate, onRuleChange }: { data: SchoolData; selectedStudentId: string; onStudentChange: (id: string) => void; drafts: Record<string, string>; errors: Record<string, string>; onDraftChange: (key: string, value: string) => void; onSave: (student: Student, subject: Subject) => void; onAssociate: (student: Student, subject: Subject, checked: boolean) => void; onRuleChange: (value: SchoolData["rules"]["fiveToSix"]) => void }) {
+function GradesPage({ data, selectedStudentId, onStudentChange, drafts, errors, onDraftChange, onSave, onAssociate, onRuleChange }: {
+  data: SchoolData;
+  selectedStudentId: string;
+  onStudentChange: (id: string) => void;
+  drafts: Record<string, string>;
+  errors: Record<string, string>;
+  onDraftChange: (key: string, value: string) => void;
+  onSave: (student: Student, subject: Subject) => void;
+  onAssociate: (student: Student, subject: Subject, checked: boolean) => void;
+  onRuleChange: (value: SchoolData["rules"]["fiveToSix"]) => void;
+}) {
   const student = data.students.find((item) => item.id === selectedStudentId);
   const ruleLabels = { "pending-rule": "Pendente de confirmacao", recovery: "Recuperacao", failed: "Reprovado", passed: "Aprovado" };
-  return <div className="grades-layout"><section className="panel grades-panel"><div className="grade-toolbar"><div><p className="eyebrow">REGISTRO INDIVIDUAL</p><h2>Medias por disciplina</h2><p>Uma media em branco permanece como nao lancada.</p></div><label className="select-field"><span>Selecionar aluno</span><select value={selectedStudentId} onChange={(event) => onStudentChange(event.target.value)}>{data.students.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label></div>
-      {student ? <div className="grade-list">{data.subjects.map((subject) => { const associated = Object.hasOwn(student.grades, subject.id); const key = `${student.id}:${subject.id}`; const grade = associated ? student.grades[subject.id] : null; const draft = drafts[key] ?? (grade === null ? "" : String(grade)); const status = associated ? classifyGrade(grade, data.rules.fiveToSix) : "ungraded"; return <div className={`grade-row ${!associated ? "grade-row-muted" : ""}`} key={subject.id}><label className="association-control"><input type="checkbox" checked={associated} onChange={(event) => onAssociate(student, subject, event.target.checked)} /><span className="custom-check"><CheckCircle2 size={14} /></span></label><div className="grade-subject-info"><strong>{subject.name}</strong><span>{associated ? subject.teacher : "Nao associada a este aluno"}</span></div>{associated ? <><div className="grade-entry"><label htmlFor={`grade-${subject.id}`}>Media</label><div className="grade-input-wrap"><input id={`grade-${subject.id}`} type="number" min="0" max="10" step="0.1" value={draft} onChange={(event) => onDraftChange(key, event.target.value)} placeholder="—" aria-label={`Media de ${subject.name}`} /><span>/ 10</span></div>{errors[key] && <small className="grade-error">{errors[key]}</small>}</div><StatusBadge status={status} /><button className="button button-outline grade-save" onClick={() => onSave(student, subject)}><Save size={15} /><span>Salvar</span></button></> : <span className="not-associated-label">Sem associacao</span>}</div>; })}{data.subjects.length === 0 && <EmptyState title="Sem disciplinas" detail="Cadastre disciplinas antes de lancar medias." icon={<BookMarked size={22} />} />}</div> : <EmptyState title="Nenhum aluno cadastrado" detail="Cadastre alunos para iniciar o acompanhamento." icon={<Users size={22} />} />}
-      <div className="grade-legend"><span><i className="legend-dot dot-green" />Aprovado</span><span><i className="legend-dot dot-yellow" />Recuperacao</span><span><i className="legend-dot dot-red" />Reprovado</span><span><i className="legend-dot dot-gray" />Nao lancada</span><span><i className="legend-dot dot-outline" />Regra pendente</span></div>
-    </section><aside className="grade-side-column"><section className="panel rule-panel"><div className="side-panel-heading"><span className="rule-symbol"><SlidersHorizontal size={17} /></span><span><p className="eyebrow">CONFIGURACAO</p><h2>Faixa 5,00 a 5,99</h2></span></div><p>A regra original nao define uma situacao para essa faixa. Escolha um criterio provisoriamente ou mantenha pendente.</p><label className="rule-select-label">Situacao atribuida<select value={data.rules.fiveToSix} onChange={(event) => onRuleChange(event.target.value as SchoolData["rules"]["fiveToSix"])}>{Object.entries(ruleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><span className="rule-pending-note"><CircleHelp size={14} />A confirmacao oficial ainda e necessaria.</span></section><section className="grade-guidance"><span className="guidance-icon"><AlertTriangle size={17} /></span><div><strong>Importante</strong><p>Digite um valor entre 0 e 10. Deixe em branco para indicar que a media ainda nao foi lancada.</p></div></section></aside></div>;
+
+  return (
+    <div className="grades-layout">
+      <section className="panel grades-panel">
+        <div className="grade-toolbar">
+          <div>
+            <p className="eyebrow">REGISTRO INDIVIDUAL</p>
+            <h2>Notas por disciplina</h2>
+            <p>Preencha ate tres notas; a media usa somente valores lancados.</p>
+          </div>
+          <label className="select-field">
+            <span>Selecionar aluno</span>
+            <select value={selectedStudentId} onChange={(event) => onStudentChange(event.target.value)}>
+              {data.students.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+            <ChevronDown size={15} />
+          </label>
+        </div>
+        {student ? (
+          <div className="grade-list">
+            {data.subjects.map((subject) => {
+              const associated = Object.hasOwn(student.grades, subject.id);
+              const key = `${student.id}:${subject.id}`;
+              const scores = associated ? student.assessments[subject.id] ?? emptyAssessmentScores() : emptyAssessmentScores();
+              const draftScores = scores.map((score, index) => {
+                const draft = drafts[`${key}:${index}`];
+                return draft === undefined ? score : validateGrade(draft);
+              }) as AssessmentScores;
+              const average = associated ? averageAssessments(draftScores) : null;
+              const status = associated ? classifyAssessments(draftScores, data.rules.fiveToSix) : "ungraded";
+
+              return (
+                <div className={`grade-row ${!associated ? "grade-row-muted" : ""}`} key={subject.id}>
+                  <label className="association-control">
+                    <input type="checkbox" checked={associated} onChange={(event) => onAssociate(student, subject, event.target.checked)} />
+                    <span className="custom-check"><CheckCircle2 size={14} /></span>
+                  </label>
+                  <div className="grade-subject-info">
+                    <strong>{subject.name}</strong>
+                    <span>{associated ? subject.teacher : "Nao associada a este aluno"}</span>
+                  </div>
+                  {associated ? <>
+                    <div className="grade-assessments">
+                      {scores.map((score, index) => {
+                        const draftKey = `${key}:${index}`;
+                        const value = drafts[draftKey] ?? (score === null ? "" : String(score));
+                        return (
+                          <label className="assessment-field" key={draftKey} htmlFor={`grade-${subject.id}-${index}`}>
+                            <span>Nota {index + 1}</span>
+                            <input
+                              id={`grade-${subject.id}-${index}`}
+                              type="number"
+                              min="0"
+                              max="10"
+                              step="0.1"
+                              value={value}
+                              onChange={(event) => onDraftChange(draftKey, event.target.value)}
+                              placeholder="—"
+                              aria-label={`Nota ${index + 1} de ${subject.name}`}
+                            />
+                          </label>
+                        );
+                      })}
+                      <div className="grade-average">
+                        <span>Média</span>
+                        <strong>{average === null ? "—" : average.toFixed(1).replace(".", ",")}</strong>
+                      </div>
+                      {errors[key] && <small className="grade-error">{errors[key]}</small>}
+                    </div>
+                    <StatusBadge status={status} />
+                    <button className="button button-outline grade-save" onClick={() => onSave(student, subject)}>
+                      <Save size={15} /><span>Salvar</span>
+                    </button>
+                  </> : <span className="not-associated-label">Sem associacao</span>}
+                </div>
+              );
+            })}
+            {data.subjects.length === 0 && <EmptyState title="Sem disciplinas" detail="Cadastre disciplinas antes de lancar notas." icon={<BookMarked size={22} />} />}
+          </div>
+        ) : <EmptyState title="Nenhum aluno cadastrado" detail="Cadastre alunos para iniciar o acompanhamento." icon={<Users size={22} />} />}
+        <div className="grade-legend">
+          <span><i className="legend-dot dot-green" />Aprovado</span>
+          <span><i className="legend-dot dot-yellow" />Recuperacao</span>
+          <span><i className="legend-dot dot-red" />Reprovado</span>
+          <span><i className="legend-dot dot-gray" />Nao lancada</span>
+          <span><i className="legend-dot dot-outline" />Regra pendente</span>
+        </div>
+      </section>
+      <aside className="grade-side-column">
+        <section className="panel rule-panel">
+          <div className="side-panel-heading">
+            <span className="rule-symbol"><SlidersHorizontal size={17} /></span>
+            <span><p className="eyebrow">CONFIGURACAO</p><h2>Faixa 5,00 a 5,99</h2></span>
+          </div>
+          <p>A regra original nao define uma situacao para essa faixa. Escolha um criterio provisoriamente ou mantenha pendente.</p>
+          <label className="rule-select-label">Situacao atribuida
+            <select value={data.rules.fiveToSix} onChange={(event) => onRuleChange(event.target.value as SchoolData["rules"]["fiveToSix"])}>
+              {Object.entries(ruleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <span className="rule-pending-note"><CircleHelp size={14} />A confirmacao oficial ainda e necessaria.</span>
+        </section>
+        <section className="grade-guidance">
+          <span className="guidance-icon"><AlertTriangle size={17} /></span>
+          <div><strong>Importante</strong><p>Digite notas de 0 a 10. Campos vazios nao contam como zero; salve para atualizar a media.</p></div>
+        </section>
+      </aside>
+    </div>
+  );
 }
 
 function ReportPage({ student, data, isAdmin, students, onStudentChange }: { student: Student | null | undefined; data: SchoolData; isAdmin: boolean; students: Student[]; onStudentChange: (id: string) => void }) {
   if (!student) return <div className="panel"><EmptyState title="Boletim indisponivel" detail="Nao foi possivel localizar os dados deste aluno." icon={<BookOpen size={22} />} /></div>;
-  const grades = data.subjects.filter((subject) => Object.hasOwn(student.grades, subject.id));
+
+  const subjects = data.subjects.filter((subject) => Object.hasOwn(student.grades, subject.id));
   const average = studentAverage(student);
-  const status = classifyGrade(average, data.rules.fiveToSix);
-  const pending = grades.filter((subject) => student.grades[subject.id] === null).length;
-  return <div className="report-wrap">{isAdmin && <div className="report-admin-select"><span>Visualizar boletim de:</span><label className="select-field"><select value={student.id} onChange={(event) => onStudentChange(event.target.value)}>{students.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label></div>}
-    <article className="report-document"><div className="report-accent" /><header className="report-header"><div className="report-school-mark"><span className="brand-mark"><GraduationCap size={20} /></span><span><strong>ESCOLA HORIZONTE</strong><small>BOLETIM ESCOLAR · 2026</small></span></div><span className="report-term">ANO LETIVO<br /><strong>2026</strong></span></header><div className="report-student-block"><div><p className="eyebrow">DADOS DO ESTUDANTE</p><h2>{student.name}</h2><p>Matricula <strong>{student.enrollment}</strong></p></div><div className="report-average"><span>MEDIA GERAL</span><strong>{average === null ? "—" : average.toFixed(1).replace(".", ",")}</strong><StatusBadge status={status} /></div></div><div className="report-table-heading"><div><p className="eyebrow">DESEMPENHO ACADEMICO</p><h3>Componentes curriculares</h3></div><span>{grades.length} disciplinas</span></div><div className="table-scroll"><table className="data-table report-table"><thead><tr><th>Disciplina</th><th>Professor</th><th>Media</th><th>Situacao academica</th></tr></thead><tbody>{grades.map((subject) => { const grade = student.grades[subject.id]; return <tr key={subject.id}><td><strong>{subject.name}</strong></td><td className="muted-cell">{subject.teacher}</td><td><strong className={grade === null ? "grade-null" : ""}>{grade === null ? "Nao lancada" : grade.toFixed(1).replace(".", ",")}</strong></td><td><StatusBadge status={classifyGrade(grade, data.rules.fiveToSix)} /></td></tr>; })}</tbody></table></div>{grades.length === 0 && <EmptyState title="Nenhuma disciplina associada" detail="A administracao ainda nao associou disciplinas a este aluno." icon={<BookOpen size={22} />} />}<footer className="report-footer"><span><ShieldCheck size={14} />Documento para consulta academica</span><span>{pending} medias pendentes</span></footer></article><p className="report-privacy"><LockKeyhole size={14} />Este boletim e pessoal. As medias nao podem ser alteradas nesta area.</p></div>;
+  const pending = subjects.reduce((total, subject) => {
+    const scores = student.assessments[subject.id] ?? emptyAssessmentScores();
+    return total + scores.filter((score) => score === null).length;
+  }, 0);
+
+  return (
+    <div className="report-wrap">
+      {isAdmin && <div className="report-admin-select"><span>Visualizar boletim de:</span><label className="select-field"><select value={student.id} onChange={(event) => onStudentChange(event.target.value)}>{students.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={15} /></label></div>}
+      <article className="report-document">
+        <div className="report-accent" />
+        <header className="report-header">
+          <div className="report-school-mark"><span className="brand-mark"><GraduationCap size={20} /></span><span><strong>ESCOLA HORIZONTE</strong><small>BOLETIM ESCOLAR · 2026</small></span></div>
+          <span className="report-term">ANO LETIVO<br /><strong>2026</strong></span>
+        </header>
+        <div className="report-student-block">
+          <div><p className="eyebrow">DADOS DO ESTUDANTE</p><h2>{student.name}</h2><p>Matricula <strong>{student.enrollment}</strong></p></div>
+          <div className="report-average"><span>MEDIA GERAL</span><strong>{average === null ? "—" : average.toFixed(1).replace(".", ",")}</strong><StatusBadge status={studentStatus(student, data.rules.fiveToSix)} /></div>
+        </div>
+        <div className="report-table-heading"><div><p className="eyebrow">DESEMPENHO ACADEMICO</p><h3>Componentes curriculares</h3></div><span>{subjects.length} disciplinas</span></div>
+        <div className="table-scroll">
+          <table className="data-table report-table">
+            <thead><tr><th>Disciplina</th><th>Professor</th><th>Notas</th><th>Media</th><th>Situacao academica</th></tr></thead>
+            <tbody>{subjects.map((subject) => {
+              const scores = student.assessments[subject.id] ?? emptyAssessmentScores();
+              const grade = student.grades[subject.id] ?? averageAssessments(scores);
+              const isPartial = scores.some((score) => score === null) && grade !== null;
+              return <tr key={subject.id}>
+                <td><strong>{subject.name}</strong></td>
+                <td className="muted-cell">{subject.teacher}</td>
+                <td><div className="report-assessment-list">{scores.map((score, index) => <span className={score === null ? "assessment-chip assessment-chip-empty" : "assessment-chip"} key={index}>N{index + 1} {score === null ? "—" : score.toFixed(1).replace(".", ",")}</span>)}</div></td>
+                <td><strong className={grade === null ? "grade-null" : isPartial ? "grade-partial" : ""}>{grade === null ? "Media nao lancada" : grade.toFixed(1).replace(".", ",")}{isPartial && <small className="partial-note">parcial</small>}</strong></td>
+                <td><StatusBadge status={classifyAssessments(scores, data.rules.fiveToSix)} /></td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
+        {subjects.length === 0 && <EmptyState title="Nenhuma disciplina associada" detail="A administracao ainda nao associou disciplinas a este aluno." icon={<BookOpen size={22} />} />}
+        <footer className="report-footer"><span><ShieldCheck size={14} />Documento para consulta academica</span><span>{pending} notas pendentes</span></footer>
+      </article>
+      <p className="report-privacy"><LockKeyhole size={14} />Este boletim e pessoal. As medias nao podem ser alteradas nesta area.</p>
+    </div>
+  );
 }
 
 function TeamPage({ data, isAdmin, draft, editing, onEdit, onCancel, onChange, onAdd, onRemove, onSave }: { data: SchoolData; isAdmin: boolean; draft: string[]; editing: boolean; onEdit: () => void; onCancel: () => void; onChange: (index: number, value: string) => void; onAdd: () => void; onRemove: (index: number) => void; onSave: () => void }) {
@@ -662,6 +855,7 @@ function StatusBadge({ status }: { status: GradeStatus }) {
     recovery: <Clock3 size={13} />,
     failed: <AlertTriangle size={13} />,
     ungraded: <span className="badge-neutral-dot" />,
+    incomplete: <Clock3 size={13} />,
     "pending-rule": <CircleHelp size={13} />,
   };
   return <span className={`status-badge ${statusStyles[status]}`}>{icons[status]}{statusLabels[status]}</span>;

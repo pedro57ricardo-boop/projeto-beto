@@ -5,9 +5,12 @@ export type GradeStatus =
   | "recovery"
   | "failed"
   | "ungraded"
+  | "incomplete"
   | "pending-rule";
 
-export type AmbiguousBandStatus = Exclude<GradeStatus, "ungraded">;
+export type AmbiguousBandStatus = Exclude<GradeStatus, "ungraded" | "incomplete">;
+export const ASSESSMENT_COUNT = 3;
+export type AssessmentScores = [number | null, number | null, number | null];
 
 export interface Student {
   id: string;
@@ -16,6 +19,7 @@ export interface Student {
   username: string;
   password: string;
   grades: Record<string, number | null>;
+  assessments: Record<string, AssessmentScores>;
 }
 
 export interface Subject {
@@ -25,7 +29,7 @@ export interface Subject {
 }
 
 export interface SchoolData {
-  version: 1;
+  version: 1 | 2;
   students: Student[];
   subjects: Subject[];
   team: string[];
@@ -71,7 +75,7 @@ export function createInitialData(): SchoolData {
   ];
 
   return {
-    version: 1,
+    version: 2,
     subjects,
     team: [...initialTeam],
     adminCredentials: { username: "admin", password: "admin123" },
@@ -83,15 +87,50 @@ export function createInitialData(): SchoolData {
       username,
       password: "aluno123",
       grades: Object.fromEntries(subjects.map((subject) => [subject.id, null])),
+      assessments: Object.fromEntries(subjects.map((subject) => [subject.id, emptyAssessmentScores()])),
     })),
   };
+}
+
+export function emptyAssessmentScores(): AssessmentScores {
+  return [null, null, null];
+}
+
+export function normalizeAssessmentScores(value: unknown, legacyGrade: number | null): AssessmentScores {
+  if (!Array.isArray(value)) {
+    return typeof legacyGrade === "number" && Number.isFinite(legacyGrade) && legacyGrade >= 0 && legacyGrade <= 10
+      ? [legacyGrade, null, null]
+      : emptyAssessmentScores();
+  }
+  return [0, 1, 2].map((index) => {
+    const score: unknown = value[index];
+    return typeof score === "number" && Number.isFinite(score) && score >= 0 && score <= 10
+      ? score
+      : null;
+  }) as AssessmentScores;
+}
+
+export function averageAssessments(scores: AssessmentScores): number | null {
+  const entered = scores.filter((score): score is number => score !== null);
+  if (entered.length === 0) return null;
+  return entered.reduce((sum, score) => sum + score, 0) / entered.length;
+}
+
+export function classifyAssessments(
+  scores: AssessmentScores,
+  fiveToSix: AmbiguousBandStatus = "pending-rule",
+): GradeStatus {
+  const average = averageAssessments(scores);
+  if (average === null) return "ungraded";
+  if (scores.some((score) => score === null)) return "incomplete";
+  return classifyGrade(average, fiveToSix);
 }
 
 export function classifyGrade(
   grade: number | null,
   fiveToSix: AmbiguousBandStatus = "pending-rule",
 ): GradeStatus {
-  if (grade === null) return "ungraded";
+  if (grade === null) return "incomplete";
   if (grade < 5) return "failed";
   if (grade < 6) return fiveToSix;
   if (grade < 7) return "recovery";
@@ -99,11 +138,24 @@ export function classifyGrade(
 }
 
 export function studentAverage(student: Student): number | null {
+  const assessments = Object.values(student.assessments);
+  if (assessments.length === 0 || assessments.some((scores) => scores.some((score) => score === null))) {
+    return null;
+  }
   const grades = Object.values(student.grades).filter(
     (grade): grade is number => grade !== null,
   );
   if (grades.length === 0) return null;
   return grades.reduce((total, grade) => total + grade, 0) / grades.length;
+}
+
+export function studentStatus(student: Student, fiveToSix: AmbiguousBandStatus): GradeStatus {
+  const assessments = Object.values(student.assessments);
+  if (assessments.length === 0) return "ungraded";
+  if (assessments.some((scores) => classifyAssessments(scores, fiveToSix) === "incomplete")) {
+    return "incomplete";
+  }
+  return classifyGrade(studentAverage(student), fiveToSix);
 }
 
 export function validateGrade(value: string): number | null {
@@ -123,6 +175,7 @@ export const statusLabels: Record<GradeStatus, string> = {
   recovery: "Recuperação",
   failed: "Reprovado",
   ungraded: "Média não lançada",
+  incomplete: "Notas pendentes",
   "pending-rule": "Regra pendente",
 };
 
@@ -131,5 +184,6 @@ export const statusStyles: Record<GradeStatus, string> = {
   recovery: "status-recovery",
   failed: "status-failed",
   ungraded: "status-ungraded",
+  incomplete: "status-ungraded",
   "pending-rule": "status-pending",
 };
