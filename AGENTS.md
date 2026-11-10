@@ -74,7 +74,7 @@ Aplicacao educacional demonstrativa para que administradores gerenciem alunos, d
 - Alunos: busca, cadastro, visualizacao, edicao, exclusao e dados de acesso demonstrativos.
 - Disciplinas/notas: CRUD de disciplinas, associar a alunos, editar media e apresentar validacao e situacao recalculada.
 - Boletim: nome e matricula, disciplinas, medias e situacoes, sem controles de edicao para aluno.
-- Nossa Equipe: identidade do projeto Escola Online e lista de ate cinco integrantes facil de editar em um unico ponto.
+- Nossa Equipe: identidade do projeto Escola Online e lista de ate seis integrantes facil de editar em um unico ponto.
 - Navegacao/logout: destinos conforme papel e encerramento da sessao atual.
 
 ## Validacao e erros

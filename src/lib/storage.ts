@@ -1,5 +1,6 @@
 import {
   createInitialData,
+  initialTeam,
   SESSION_KEY,
   STORAGE_KEY,
   type SchoolData,
@@ -69,6 +70,7 @@ export function loadSchoolData(): LoadResult {
     return {
       data: {
         ...parsed,
+        team: migrateDefaultTeam(parsed.team),
         adminCredentials: parsed.adminCredentials ?? { username: "admin", password: "admin123" },
       },
       warning: null,
@@ -148,5 +150,14 @@ function isSchoolData(value: unknown): value is SchoolData {
     ["pending-rule", "passed", "recovery", "failed"].includes(
       data.rules.fiveToSix,
     )
+  );
+}
+
+function migrateDefaultTeam(team: string[]): string[] {
+  if (team.length > 0 && team.every((member, index) => member === `Integrante ${index + 1}`)) {
+    return [...initialTeam];
+  }
+  return team.map((member, index) =>
+    /^Integrante \d+$/.test(member) ? initialTeam[index] ?? member : member,
   );
 }

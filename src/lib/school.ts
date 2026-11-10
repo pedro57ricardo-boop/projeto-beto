@@ -40,6 +40,14 @@ export interface Session {
 
 export const STORAGE_KEY = "escola-online-data-v1";
 export const SESSION_KEY = "escola-online-session-v1";
+export const initialTeam = [
+  "Pedro Ricardo",
+  "João Gabriel",
+  "Jamily Seleste",
+  "Raiany Gabrielle",
+  "Geraldo Lins",
+  "Kauã de Lira",
+];
 
 const roster = [
   ["Ana Beatriz Souza", "2026001", "ana.souza"],
@@ -56,16 +64,16 @@ const roster = [
 
 export function createInitialData(): SchoolData {
   const subjects: Subject[] = [
-    { id: "sub-portugues", name: "Lingua Portuguesa", teacher: "Mariana Lopes" },
-    { id: "sub-matematica", name: "Matematica", teacher: "Rafael Teixeira" },
-    { id: "sub-ciencias", name: "Ciencias", teacher: "Patricia Moura" },
+    { id: "sub-portugues", name: "Língua Portuguesa", teacher: "Mariana Lopes" },
+    { id: "sub-matematica", name: "Matemática", teacher: "Rafael Teixeira" },
+    { id: "sub-ciencias", name: "Ciências", teacher: "Patricia Moura" },
     { id: "sub-historia", name: "Historia", teacher: "Andre Campos" },
   ];
 
   return {
     version: 1,
     subjects,
-    team: ["Integrante 1", "Integrante 2", "Integrante 3"],
+    team: [...initialTeam],
     adminCredentials: { username: "admin", password: "admin123" },
     rules: { fiveToSix: "pending-rule" },
     students: roster.map(([name, enrollment, username]) => ({
@@ -112,9 +120,9 @@ export function createId(prefix: string): string {
 
 export const statusLabels: Record<GradeStatus, string> = {
   passed: "Aprovado",
-  recovery: "Recuperacao",
+  recovery: "Recuperação",
   failed: "Reprovado",
-  ungraded: "Media nao lancada",
+  ungraded: "Média não lançada",
   "pending-rule": "Regra pendente",
 };
 
